@@ -1,69 +1,121 @@
-import { ICPU } from "./interfaces/ICPU.ts";
-import { IRAM } from "./interfaces/IRAM.ts";
+import {
+  addressingModeMap,
+  addressingModeRecord,
+  cyclesMap,
+} from "./addressingmodes.ts";
+import { IBus } from "./bus.ts";
+import { CPUInstructions } from "./cpuInstructions.ts";
 
-
-
-
-import { CPUInstructions, CPUCycles } from "./cpuInstructions.ts";
-import { CPUAddressingModes } from "./cpuAddressingModes.ts";
-
-
-
-export class CPU implements ICPU{
-    pc= 0;
-    sp= 0;
-    a= 0;
-    x= 0;
-    y= 0;
-    cycles= 0;
-    status= 0;
-
-    constructor(public ram: IRAM){
-        this.ram = ram;
-    }
-
-
-    step(): void {
-
-        const opcode = this.read(this.pc);
-
-        const instruction = CPUInstructions[opcode];
-
-        CPUAddressingModes[opcode](this);
-
-        instruction(this, this.read(this.pc));
-
-        this.pc = this.pc + 1;
-
-        this.cycles = this.cycles + CPUCycles[opcode];
-
-    }
-
-    read(address: number): number {
-        return this.ram.read(address);
-    }
-
-    read16(address: number): number {
-        return this.ram.read16(address);
-    }
-
-    write(address: number, data: number): void {
-        this.ram.write(address, data);
-    }
-
-    write16(address: number, data: number): void {
-        this.ram.write16(address, data);
-    }
-   
-
-    reset(): void {
-        this.pc = 0;
-        this.sp = 0;
-        this.a = 0;
-        this.x = 0;
-        this.y = 0;
-        this.status = 0
-        this.ram.reset();
-    }
+export interface ICPU {
+  accumulator: number;
+  registerX: number;
+  registerY: number;
+  SP: number;
+  PC: number;
+  status: number;
+  bus: IBus;
+  cycles: number;
+  read(addr: number): number;
+  write(addr: number, data: number): void;
+  read16(addr: number): number;
+  write16(addr: number, data: number): void;
+  clock(): void;
+  nmi(): void;
+  irq(): void;
+  reset(): void;
 }
 
+export class CPU implements ICPU {
+  accumulator: number;
+  registerX: number;
+  registerY: number;
+  SP: number;
+  PC: number;
+  status: number;
+  bus: IBus;
+
+  constructor(bus: IBus) {
+    this.accumulator = 0x00;
+    this.registerX = 0x00;
+    this.registerY = 0x00;
+    this.SP = 0x00;
+    this.PC = 0x0000;
+    this.status = 0x00;
+    this.bus = bus;
+  }
+
+  get cycles(): number {
+    return this.bus.cycles;
+  }
+  set cycles(cycles: number) {
+    this.bus.cycles = cycles;
+  }
+
+  nmi(): void {
+    this.PC--;
+    this.write16(this.SP, this.PC);
+    this.SP--;
+    this.write(this.SP, this.status);
+    this.SP--;
+    this.PC = this.read16(0xfffa);
+  }
+  irq(): void {
+    this.PC--;
+    this.write16(this.SP, this.PC);
+    this.SP--;
+    this.write(this.SP, this.status);
+    this.SP--;
+    this.PC = this.read16(0xfffe);
+  }
+
+  read(addr: number): number {
+    return this.bus.read(addr);
+  }
+
+  write(addr: number, data: number): void {
+    this.bus.write(addr, data);
+  }
+
+  read16(addr: number): number {
+    return this.bus.read16(addr);
+  }
+
+  write16(addr: number, data: number): void {
+    this.bus.write16(addr, data);
+  }
+
+  clock(): void {
+    if (this.cycles === 0) {
+      const opcode = this.read(this.PC);
+
+      this.PC++;
+
+      if (opcode === 0x00) {
+        this.nmi();
+
+        this.cycles = 7;
+        return;
+      } else if (opcode === 0xea) {
+        this.irq();
+
+        this.cycles = 7;
+        return;
+      }
+
+      const addressingMode = addressingModeMap[opcode];
+
+      const result = addressingModeRecord[addressingMode](this);
+      const instruction = CPUInstructions[opcode];
+      instruction(this, result);
+
+      this.cycles = cyclesMap[opcode];
+    }
+    this.cycles--;
+  }
+
+  reset(): void {
+    this.SP = 0xfd;
+    this.status = 0x24;
+    this.PC = this.read16(0xfffc);
+  }
+}
